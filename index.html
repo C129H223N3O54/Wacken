@@ -194,13 +194,13 @@
    databaseURL bitte mit Region, für DE z. B. ...europe-west1.firebasedatabase.app
    ========================================================= */
 const firebaseConfig = {
-  apiKey: "AIzaSyCS1TKAay14uW-Vk-C4VOGVxbgnxEapN0Y",
-  authDomain: "wacken-11a9a.firebaseapp.com",
+  apiKey:      "AIzaSyCS1TKAay14uW-Vk-C4VOGVxbgnxEapN0Y",
+  authDomain:  "wacken-11a9a.firebaseapp.com",
   databaseURL: "https://wacken-11a9a-default-rtdb.europe-west1.firebasedatabase.app",
-  projectId: "wacken-11a9a",
-  storageBucket: "wacken-11a9a.firebasestorage.app",
-  messagingSenderId: "762414865965",
-  appId: "1:762414865965:web:9a384eb50b91f3729c62a4"
+  projectId:   "wacken-11a9a",
+  storageBucket:"wacken-11a9a.firebasestorage.app",
+  messagingSenderId:"762414865965",
+  appId:       "1:762414865965:web:9a384eb50b91f3729c62a4"
 };
 const FB_VERSION = "10.12.5";
 /* ========================================================= */
@@ -401,18 +401,35 @@ function promptCode(){
 $("syncCodeBtn").onclick=promptCode;
 pill.onclick=()=>{ if(!crewCode || pill.dataset.state==="setup" || pill.dataset.state==="local") promptCode(); else promptCode(); };
 
-/* ---------- Firebase laden & verbinden ---------- */
+/* ---------- Firebase laden, anonym anmelden & verbinden ---------- */
 async function initSync(){
   if(!SYNC_CONFIGURED || !crewCode){ refreshStatus(); return; }
   refreshStatus(); // connecting
   try{
     const base=`https://www.gstatic.com/firebasejs/${FB_VERSION}`;
-    const appMod=await import(`${base}/firebase-app.js`);
-    const dbMod =await import(`${base}/firebase-database.js`);
-    FB={ ...appMod, ...dbMod };
+    const [appMod,dbMod,authMod]=await Promise.all([
+      import(`${base}/firebase-app.js`),
+      import(`${base}/firebase-database.js`),
+      import(`${base}/firebase-auth.js`)
+    ]);
+    FB={ ...appMod, ...dbMod, ...authMod };
     const app=FB.initializeApp(firebaseConfig);
-    db=FB.getDatabase(app);
 
+    // 1) Anonym anmelden – ohne gültigen Login verweigern die Regeln alles.
+    const auth=FB.getAuth(app);
+    try{
+      await FB.signInAnonymously(auth);
+    }catch(authErr){
+      console.error("Anon-Login fehlgeschlagen:",authErr);
+      db=null; syncReady=false;
+      pill.dataset.state="setup";
+      pillLabel.textContent="Anon-Login aktivieren";
+      $("footNote").textContent="Firebase-Console → Authentication → „Anonym“ aktivieren.";
+      return;
+    }
+
+    // 2) Datenbank verbinden (Anfragen tragen jetzt den Auth-Token)
+    db=FB.getDatabase(app);
     FB.onValue(FB.ref(db,".info/connected"),s=>{ connected=!!s.val(); refreshStatus(); });
 
     FB.onValue(FB.ref(db,itemsPath()),snap=>{
@@ -420,6 +437,12 @@ async function initSync(){
       items=Object.keys(val).map(id=>({id,...val[id]}))
                  .sort((a,b)=>(a.order||0)-(b.order||0));
       saveLocal(); syncReady=true; refreshStatus(); render();
+    }, err=>{
+      console.error("DB-Zugriff verweigert:",err);
+      db=null; syncReady=false;
+      pill.dataset.state="setup";
+      pillLabel.textContent="Regeln prüfen";
+      $("footNote").textContent="Zugriff verweigert – sind die neuen Datenbank-Regeln veröffentlicht?";
     });
   }catch(err){
     console.error("Sync konnte nicht starten:",err);
