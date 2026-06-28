@@ -83,8 +83,24 @@
   .right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none;}
   .cost{font-family:'Oswald',sans-serif;font-weight:600;font-size:1.05rem;white-space:nowrap;}
   li.done .cost{color:var(--done);}
-  .del{background:none;border:none;color:var(--ash);cursor:pointer;padding:2px;line-height:0;border-radius:3px;}
+  .acts{display:flex;gap:2px;}
+  .iconbtn{background:none;border:none;color:var(--ash);cursor:pointer;padding:4px;line-height:0;border-radius:3px;}
+  .edit-btn:hover{color:var(--henrik);}
   .del:hover{color:var(--blood);}
+  .body[role="button"]{cursor:pointer;}
+  .body[role="button"]:hover .what{color:#fff;}
+
+  .item.editing{display:block;border-left-color:var(--blood);}
+  .edit{display:flex;flex-direction:column;gap:9px;}
+  .edit .erow{display:grid;grid-template-columns:1fr 1fr;gap:9px;}
+  .ebtns{display:flex;gap:8px;margin-top:2px;}
+  .ebtns button{font-family:'Oswald',sans-serif;text-transform:uppercase;letter-spacing:.1em;font-size:.78rem;border-radius:var(--radius);padding:11px 12px;cursor:pointer;border:1px solid var(--steel-line);}
+  .e-save{background:var(--blood);color:var(--bone);border-color:var(--blood);flex:1;}
+  .e-save:hover{background:#d81a34;}
+  .e-cancel{background:transparent;color:var(--ash);}
+  .e-cancel:hover{color:var(--bone);border-color:var(--ash);}
+  .e-del{background:transparent;color:var(--blood);border-color:var(--blood-dim);margin-left:auto;}
+  .e-del:hover{background:var(--blood-dim);color:var(--bone);}
   .empty{text-align:center;color:var(--ash);border:1px dashed var(--steel-line);border-radius:var(--radius);padding:34px 18px;}
   .empty .horns{font-size:1.6rem;display:block;margin-bottom:6px;}
 
@@ -215,6 +231,7 @@ let items=[];
 try{ items=JSON.parse(localStorage.getItem(STORE_KEY))||[]; }catch(e){ items=[]; }
 let filter=localStorage.getItem(FILTER_KEY)||"all";
 let crewCode=localStorage.getItem(CODE_KEY)||"";
+let editingId=null, editBuffer=null;
 
 // Firebase-Handles (lazy)
 let FB=null, db=null, connected=false, syncReady=false;
@@ -303,6 +320,8 @@ function render(){
 }
 
 function renderItem(it){
+  if(it.id===editingId) return renderEditRow(it);
+
   const li=document.createElement("li");
   li.className="item"+(it.done?" done":"");
   li.dataset.who=it.who;
@@ -317,6 +336,10 @@ function renderItem(it){
   };
 
   const body=document.createElement("div"); body.className="body";
+  body.setAttribute("role","button"); body.setAttribute("tabindex","0");
+  body.setAttribute("aria-label","Bearbeiten: "+it.what);
+  body.onclick=()=>openEdit(it.id);
+  body.onkeydown=e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); openEdit(it.id); } };
   const what=document.createElement("div"); what.className="what"; what.textContent=it.what;
   const meta=document.createElement("div"); meta.className="meta";
   const who=document.createElement("span"); who.className="who "+it.who; who.textContent=it.who;
@@ -326,16 +349,90 @@ function renderItem(it){
 
   const right=document.createElement("div"); right.className="right";
   const cost=document.createElement("span"); cost.className="cost"; cost.textContent=it.cost?fmt(it.cost):"–";
-  const del=document.createElement("button"); del.className="del"; del.setAttribute("aria-label","Löschen");
+  const acts=document.createElement("div"); acts.className="acts";
+  const edit=document.createElement("button"); edit.className="iconbtn edit-btn"; edit.setAttribute("aria-label","Bearbeiten");
+  edit.innerHTML='<svg width="18" height="18" viewBox="0 0 18 18"><path d="M11.4 3.3l3.3 3.3M3.5 14.5l.5-3 7.4-7.4 3 3-7.4 7.4z" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linejoin="round"/></svg>';
+  edit.onclick=()=>openEdit(it.id);
+  const del=document.createElement("button"); del.className="iconbtn del"; del.setAttribute("aria-label","Löschen");
   del.innerHTML='<svg width="18" height="18" viewBox="0 0 18 18"><path d="M5 5l8 8M13 5l-8 8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
-  del.onclick=()=>{
-    items=items.filter(x=>x.id!==it.id); saveLocal(); render();
-    if(syncActive()) FB.remove(FB.ref(db,`${itemsPath()}/${it.id}`));
-  };
-  right.appendChild(cost); right.appendChild(del);
+  del.onclick=()=>deleteItem(it.id);
+  acts.appendChild(edit); acts.appendChild(del);
+  right.appendChild(cost); right.appendChild(acts);
 
   li.appendChild(check); li.appendChild(body); li.appendChild(right);
   return li;
+}
+
+function renderEditRow(it){
+  const li=document.createElement("li");
+  li.className="item editing"; li.dataset.who=editBuffer.who;
+  li.innerHTML=`
+    <div class="edit">
+      <input class="e-what" type="text" placeholder="Was" autocomplete="off">
+      <div class="erow">
+        <select class="e-who">
+          <option value="Henrik">Henrik</option>
+          <option value="JEM">JEM</option>
+        </select>
+        <input class="e-qty" type="text" placeholder="Menge" autocomplete="off">
+      </div>
+      <input class="e-cost" type="number" inputmode="decimal" step="0.01" min="0" placeholder="Kosten (€)">
+      <div class="ebtns">
+        <button class="e-save">Speichern</button>
+        <button class="e-cancel">Abbrechen</button>
+        <button class="e-del" aria-label="Löschen">Löschen</button>
+      </div>
+    </div>`;
+  const w=li.querySelector(".e-what");  w.value=editBuffer.what;
+  const wo=li.querySelector(".e-who");  wo.value=editBuffer.who;
+  const q=li.querySelector(".e-qty");   q.value=editBuffer.qty;
+  const c=li.querySelector(".e-cost");  c.value=editBuffer.cost?editBuffer.cost:"";
+  w.oninput=e=>editBuffer.what=e.target.value;
+  wo.onchange=e=>{ editBuffer.who=e.target.value; li.dataset.who=e.target.value; };
+  q.oninput=e=>editBuffer.qty=e.target.value;
+  c.oninput=e=>editBuffer.cost=e.target.value;
+  [w,q,c].forEach(el=>el.addEventListener("keydown",e=>{
+    if(e.key==="Enter"){ e.preventDefault(); commitEdit(); }
+    else if(e.key==="Escape"){ e.preventDefault(); closeEdit(); }
+  }));
+  li.querySelector(".e-save").onclick=commitEdit;
+  li.querySelector(".e-cancel").onclick=closeEdit;
+  li.querySelector(".e-del").onclick=()=>deleteItem(it.id);
+  return li;
+}
+
+function openEdit(id){
+  const it=items.find(x=>x.id===id); if(!it) return;
+  editingId=id;
+  editBuffer={ what:it.what, who:it.who, qty:it.qty||"", cost:it.cost||0 };
+  render();
+  requestAnimationFrame(()=>{ const w=elList.querySelector(".e-what"); if(w){ w.focus(); if(w.select)w.select(); } });
+}
+
+function closeEdit(){ editingId=null; editBuffer=null; render(); }
+
+function commitEdit(){
+  if(!editingId) return;
+  const it=items.find(x=>x.id===editingId);
+  if(!it){ closeEdit(); return; }
+  const what=(editBuffer.what||"").trim();
+  if(!what){ const w=elList.querySelector(".e-what"); if(w) w.focus(); return; }
+  it.what=what;
+  it.who = editBuffer.who==="JEM" ? "JEM" : "Henrik";
+  it.qty = (editBuffer.qty||"").trim();
+  it.cost = parseFloat(String(editBuffer.cost).replace(",","."))||0;
+  saveLocal();
+  const saved=it;
+  editingId=null; editBuffer=null;
+  render();
+  if(syncActive()) FB.set(FB.ref(db,`${itemsPath()}/${saved.id}`), stripId(saved));
+}
+
+function deleteItem(id){
+  items=items.filter(x=>x.id!==id);
+  if(editingId===id){ editingId=null; editBuffer=null; }
+  saveLocal(); render();
+  if(syncActive()) FB.remove(FB.ref(db,`${itemsPath()}/${id}`));
 }
 
 /* ---------- Aktionen ---------- */
